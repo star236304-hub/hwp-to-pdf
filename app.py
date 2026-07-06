@@ -2,6 +2,7 @@ import streamlit as st
 import subprocess
 import tempfile
 import uuid
+import os
 from pathlib import Path
 
 st.set_page_config(page_title="HWP → PDF 변환기", page_icon="📄", layout="centered")
@@ -29,14 +30,24 @@ if uploaded_file is not None:
             with open(input_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
 
+            # 컨테이너 환경에서 HOME이 없거나 쓰기 불가능하면
+            # soffice가 프로필을 생성하지 못해 "source file could not be
+            # loaded" 오류가 발생합니다. 명시적으로 쓰기 가능한 HOME을 지정합니다.
+            env = os.environ.copy()
+            env["HOME"] = str(work_dir)
+
             with st.spinner("변환 중입니다... (최대 1~2분 소요될 수 있어요)"):
                 try:
                     result = subprocess.run(
                         [
                             "soffice",
                             "--headless",
-                            "--norestore",
+                            "--invisible",
+                            "--nodefault",
+                            "--nofirststartwizard",
                             "--nolockcheck",
+                            "--nologo",
+                            "--norestore",
                             f"-env:UserInstallation=file://{profile_dir}",
                             "--convert-to", "pdf",
                             "--outdir", str(work_dir),
@@ -45,6 +56,7 @@ if uploaded_file is not None:
                         capture_output=True,
                         text=True,
                         timeout=120,
+                        env=env,
                     )
                 except subprocess.TimeoutExpired:
                     st.error("변환 시간이 초과됐어요. 파일이 너무 크거나 손상됐을 수 있어요.")
@@ -64,8 +76,23 @@ if uploaded_file is not None:
                         )
                 else:
                     st.error("변환에 실패했습니다. 파일이 손상됐거나 지원되지 않는 형식일 수 있어요.")
-                    with st.expander("오류 상세 보기"):
-                        st.code(result.stderr or "알 수 없는 오류")
+                    with st.expander("오류 상세 보기 (진단용)"):
+                        st.write("**returncode:**", result.returncode)
+                        st.write("**stdout:**")
+                        st.code(result.stdout or "(없음)")
+                        st.write("**stderr:**")
+                        st.code(result.stderr or "(없음)")
+
+st.divider()
+with st.expander("🔧 LibreOffice 설치 상태 진단"):
+    if st.button("soffice 버전 확인"):
+        try:
+            v = subprocess.run(
+                ["soffice", "--version"], capture_output=True, text=True, timeout=30
+            )
+            st.code(v.stdout + v.stderr)
+        except FileNotFoundError:
+            st.error("soffice 명령어를 찾을 수 없어요. packages.txt에 libreoffice가 제대로 설치됐는지 확인하세요.")
 
 st.divider()
 st.caption(
